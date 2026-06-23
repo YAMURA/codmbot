@@ -2,5 +2,3 @@ cloudscraper==1.2.71
 requests==2.31.0
 pycryptodome==3.19.0
 python-telegram-bot==20.7
-asyncpg==0.29.0
-typing-extensions==4.8.0
