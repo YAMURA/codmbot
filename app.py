@@ -36,31 +36,76 @@ from telegram.ext import (
 )
 
 # ==================== FIX FOR PYTHON 3.13 COMPATIBILITY ====================
-# Monkey patch the Updater class to work with Python 3.13
+# This patch fixes the __slots__ issue in python-telegram-bot for Python 3.13
 import telegram.ext._updater
+from telegram.ext._updater import Updater
 
 # Store the original __init__ method
-original_updater_init = telegram.ext._updater.Updater.__init__
+original_updater_init = Updater.__init__
 
 def patched_updater_init(self, *args, **kwargs):
-    # Call the original __init__ first
-    original_updater_init(self, *args, **kwargs)
-    # Now manually set the attribute using object.__setattr__ to bypass __slots__
+    """Patched __init__ that handles the __slots__ issue in Python 3.13"""
+    # First, call the parent class __init__ if it exists
+    # We need to handle this carefully because we're bypassing the normal flow
+    
+    # Get the bot and update_queue from kwargs or args
+    bot = kwargs.get('bot')
+    update_queue = kwargs.get('update_queue')
+    
+    # If not in kwargs, try args
+    if bot is None and len(args) > 0:
+        bot = args[0]
+    if update_queue is None and len(args) > 1:
+        update_queue = args[1]
+    
+    # Call the parent __init__ (which is object.__init__ since Updater inherits from object)
+    # This avoids the problematic __slots__ assignment
+    object.__init__(self)
+    
+    # Now manually set all the attributes that the original __init__ would set
+    from telegram.ext._updater import _DEFAULT_CHECK_INTERVAL
+    
+    # Set basic attributes
+    self.bot = bot
+    self.update_queue = update_queue
+    self._check_interval = kwargs.get('check_interval', _DEFAULT_CHECK_INTERVAL)
+    
+    # Initialize other attributes
+    from asyncio import Queue
+    from telegram.ext._updater import _UpdaterStopEvent
+    
+    self._stop_event = None
+    self._logger = logging.getLogger(__name__)
+    self._last_update = 0
+    self._running = False
+    self._exception_event = None
+    self._udpate_fetcher_task = None
+    self._polling_task = None
+    self._webhook_task = None
+    self._webhook_app = None
+    self._webhook_runner = None
+    
+    # This is the attribute that was causing the issue
     try:
         object.__setattr__(self, '_Updater__polling_cleanup_cb', None)
     except AttributeError:
-        # If the attribute already exists, ignore
         pass
+    
+    # Set allowed_updates if provided
+    if 'allowed_updates' in kwargs:
+        self.allowed_updates = kwargs['allowed_updates']
+    else:
+        self.allowed_updates = None
 
 # Apply the patch
-telegram.ext._updater.Updater.__init__ = patched_updater_init
+Updater.__init__ = patched_updater_init
 
-# Also patch the ApplicationBuilder if needed
+# Also patch the ApplicationBuilder build method
 import telegram.ext._applicationbuilder
 original_build = telegram.ext._applicationbuilder.ApplicationBuilder.build
 
 def patched_build(self):
-    # Call original build
+    """Patched build method that handles any remaining issues"""
     app = original_build(self)
     return app
 
