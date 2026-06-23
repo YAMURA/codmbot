@@ -12,11 +12,11 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import cloudscraper
 import requests
 from Crypto.Cipher import AES
-from flask import Flask
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -55,19 +55,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ==================== FLASK HEALTH CHECK SERVER ====================
-health_app = Flask(__name__)
-
-@health_app.route('/')
-@health_app.route('/health')
-def health_check():
-    return "OK", 200
+# ==================== HEALTH CHECK SERVER ====================
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/' or self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 def run_health_server():
     """Run a minimal HTTP server for Render health checks"""
     port = int(os.environ.get("PORT", 10000))
     try:
-        health_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        server.serve_forever()
     except Exception as e:
         logger.error(f"Health server error: {e}")
 
