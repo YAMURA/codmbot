@@ -9,3 +9,5 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
     volumes:
       - ./data:/app/data
+    ports:
+      - "8080:8080"
