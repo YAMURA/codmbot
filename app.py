@@ -77,33 +77,33 @@ SINGLE_CHECK_PASSWORD = 2
 BULK_CHECK_FILE = 3
 
 # ==================== COOKIE AND DATADOME MANAGEMENT ====================
+# ==================== COOKIE AND DATADOME MANAGEMENT ====================
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COOKIE_FILE = os.path.join(_SCRIPT_DIR, 'fresh_cookie.txt')
 
 def _db_fetch_cookies():
-    """Fetch cookies from database"""
+    """Fetch cookies from file"""
     try:
-        import asyncio
-        import asyncpg
-        async def _run():
-            conn = await asyncio.wait_for(asyncpg.connect(DB_URL), timeout=6)
-            rows = await conn.fetch("SELECT cookie_line FROM cookies WHERE is_banned=FALSE")
-            await conn.close()
-            return [r["cookie_line"] for r in rows]
-        return asyncio.run(_run())
+        cookies = []
+        fresh_cookie_file = os.path.join(_SCRIPT_DIR, 'fresh_cookies.txt')
+        if os.path.exists(fresh_cookie_file):
+            with open(fresh_cookie_file, 'r', encoding='utf-8', errors='ignore') as f:
+                cookies.extend([c.strip() for c in f.read().splitlines() if c.strip() and 'datadome=' in c.strip()])
+        
+        if os.path.exists(COOKIE_FILE):
+            with open(COOKIE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+                cookies.extend([c.strip() for c in f.read().splitlines() if c.strip() and 'datadome=' in c.strip()])
+        
+        return list(set(cookies))
     except Exception:
         return []
 
 def _db_ban_cookie(cookie_line):
-    """Ban a cookie in database"""
+    """Ban a cookie in file"""
     try:
-        import asyncio
-        import asyncpg
-        async def _run():
-            conn = await asyncio.wait_for(asyncpg.connect(DB_URL), timeout=6)
-            await conn.execute("UPDATE cookies SET is_banned=TRUE WHERE cookie_line=$1", cookie_line)
-            await conn.close()
-        asyncio.run(_run())
+        banned_file = os.path.join(_SCRIPT_DIR, 'banned_cookies.txt')
+        with open(banned_file, 'a', encoding='utf-8', errors='ignore') as f:
+            f.write(cookie_line + '\n')
     except Exception:
         pass
 
