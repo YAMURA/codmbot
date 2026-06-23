@@ -1,4 +1,3 @@
-# codm_telegram_bot.py
 import hashlib
 import json
 import logging
@@ -36,13 +35,16 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "8066352636:AAEbAQfjqTV4EDHifrDH9oKGHiuIsSO9y7w"  # Replace with your bot token
+# Use environment variable for bot token (SECURE)
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable not set!")
+
 OWNER_USERNAME = "@ZyronDevv"
 BOT_NAME = "CODM Checker Bot"
 
 # ==================== TEMPORARY FEATURE FLAGS ====================
-# Set this to False to disable bulk check feature
-BULK_CHECK_ENABLED = False  # <-- TEMPORARILY DISABLED
+BULK_CHECK_ENABLED = False
 BULK_CHECK_MESSAGE = "🔧 The bulk check feature is temporarily unavailable. Please use single check instead.\n\nWe're working on improving this feature. Thank you for your patience!"
 
 # ==================== LOGGING ====================
@@ -76,7 +78,6 @@ SINGLE_CHECK_ACCOUNT = 1
 SINGLE_CHECK_PASSWORD = 2
 BULK_CHECK_FILE = 3
 
-# ==================== COOKIE AND DATADOME MANAGEMENT ====================
 # ==================== COOKIE AND DATADOME MANAGEMENT ====================
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COOKIE_FILE = os.path.join(_SCRIPT_DIR, 'fresh_cookie.txt')
@@ -124,7 +125,7 @@ def applyck(session, cookie_str):
     session.cookies.update(cookie_dict)
 
 def get_datadome_cookie(session=None):
-    """Fetch a fresh DataDome cookie - SAME as original"""
+    """Fetch a fresh DataDome cookie"""
     url = 'https://dd.garena.com/js/'
     headers = {
         'accept': '*/*',
@@ -217,7 +218,7 @@ def get_datadome_cookie(session=None):
 
     return None
 
-# ==================== COOKIE MANAGER CLASS (SAME AS ORIGINAL) ====================
+# ==================== COOKIE MANAGER CLASS ====================
 class CookieManager:
     def __init__(self, server_url=None):
         self.banned_cookies = set()
@@ -289,7 +290,7 @@ class CookieManager:
                 return True
         return False
 
-# ==================== DATADOME MANAGER CLASS (SAME AS ORIGINAL) ====================
+# ==================== DATADOME MANAGER CLASS ====================
 class DataDomeManager:
     def __init__(self):
         self.current_datadome = None
