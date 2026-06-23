@@ -35,6 +35,37 @@ from telegram.ext import (
     ConversationHandler,
 )
 
+# ==================== FIX FOR PYTHON 3.13 COMPATIBILITY ====================
+# Monkey patch the Updater class to work with Python 3.13
+import telegram.ext._updater
+
+# Store the original __init__ method
+original_updater_init = telegram.ext._updater.Updater.__init__
+
+def patched_updater_init(self, *args, **kwargs):
+    # Call the original __init__ first
+    original_updater_init(self, *args, **kwargs)
+    # Now manually set the attribute using object.__setattr__ to bypass __slots__
+    try:
+        object.__setattr__(self, '_Updater__polling_cleanup_cb', None)
+    except AttributeError:
+        # If the attribute already exists, ignore
+        pass
+
+# Apply the patch
+telegram.ext._updater.Updater.__init__ = patched_updater_init
+
+# Also patch the ApplicationBuilder if needed
+import telegram.ext._applicationbuilder
+original_build = telegram.ext._applicationbuilder.ApplicationBuilder.build
+
+def patched_build(self):
+    # Call original build
+    app = original_build(self)
+    return app
+
+telegram.ext._applicationbuilder.ApplicationBuilder.build = patched_build
+
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = "8066352636:AAEbAQfjqTV4EDHifrDH9oKGHiuIsSO9y7w"  # Replace with your bot token
 OWNER_USERNAME = "@ZyronDevv"
