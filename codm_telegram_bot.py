@@ -9,7 +9,6 @@ import threading
 import time
 import urllib.parse
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -1463,6 +1462,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode='HTML'
         )
 
+# ==================== MAIN APPLICATION ====================
 async def run_application():
     """Async function to run the application with proper event loop handling"""
     application = Application.builder().token(BOT_TOKEN).build()
@@ -1504,27 +1504,19 @@ async def run_application():
     print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
     print("✅ Bot is running!")
 
+    # Start the bot and keep it running
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
     
-    # Keep the bot running
-    while True:
-        await asyncio.sleep(1)
+    # Use idle to properly handle shutdown signals
+    await application.updater.idle()
 
 def main():
-    """Start the bot with proper event loop handling for all Python versions."""
+    """Start the bot with proper event loop handling."""
     try:
-        # Try to get the current event loop
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop, create one
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        # Run the async function
-        asyncio.get_event_loop().run_until_complete(run_application())
+        # Use asyncio.run() for Python 3.7+
+        asyncio.run(run_application())
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
     except Exception as e:
