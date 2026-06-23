@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 import cloudscraper
 import requests
 from Crypto.Cipher import AES
+from flask import Flask
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -53,6 +54,22 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ==================== FLASK HEALTH CHECK SERVER ====================
+health_app = Flask(__name__)
+
+@health_app.route('/')
+@health_app.route('/health')
+def health_check():
+    return "OK", 200
+
+def run_health_server():
+    """Run a minimal HTTP server for Render health checks"""
+    port = int(os.environ.get("PORT", 10000))
+    try:
+        health_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    except Exception as e:
+        logger.error(f"Health server error: {e}")
 
 # ==================== CONSTANTS ====================
 CODM_REGIONS = {
@@ -1513,9 +1530,14 @@ async def run_application():
     await application.updater.idle()
 
 def main():
-    """Start the bot with proper event loop handling."""
+    """Start the bot with health check server."""
+    # Start health check server in a separate thread
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    print(f"✅ Health check server running on port {os.environ.get('PORT', 10000)}")
+    
+    # Start the bot
     try:
-        # Use asyncio.run() for Python 3.7+
         asyncio.run(run_application())
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
