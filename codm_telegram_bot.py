@@ -1521,13 +1521,22 @@ async def run_application():
     print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
     print("✅ Bot is running!")
 
-    # Start the bot and keep it running
+    # Start the bot
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
     
-    # Use idle to properly handle shutdown signals
-    await application.updater.idle()
+    # Keep the bot running
+    print("🔄 Bot is polling for updates...")
+    try:
+        # Keep the bot running until interrupted
+        while True:
+            await asyncio.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        print("\n🛑 Stopping bot...")
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 def main():
     """Start the bot with health check server."""
