@@ -34,6 +34,22 @@ from telegram.ext import (
     ConversationHandler,
 )
 
+import telegram.ext._updater
+# Monkey patch to fix the attribute error
+if not hasattr(telegram.ext._updater.Updater, '_Updater__polling_cleanup_cb'):
+    # Define the missing attribute in the class
+    def __init__(self, *args, **kwargs):
+        # Store the original __init__
+        original_init = telegram.ext._updater.Updater.__init__
+        # Call original with our modifications
+        self = original_init(*args, **kwargs)
+        # Add the missing attribute
+        self.__polling_cleanup_cb = None
+        return self
+    
+    # Apply the patch
+    telegram.ext._updater.Updater.__init__ = __init__
+    
 # ==================== CONFIGURATION ====================
 # Use environment variable for bot token (SECURE)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
