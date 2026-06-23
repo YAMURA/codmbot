@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -34,22 +35,6 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-import telegram.ext._updater
-# Monkey patch to fix the attribute error
-if not hasattr(telegram.ext._updater.Updater, '_Updater__polling_cleanup_cb'):
-    # Define the missing attribute in the class
-    def __init__(self, *args, **kwargs):
-        # Store the original __init__
-        original_init = telegram.ext._updater.Updater.__init__
-        # Call original with our modifications
-        self = original_init(*args, **kwargs)
-        # Add the missing attribute
-        self.__polling_cleanup_cb = None
-        return self
-    
-    # Apply the patch
-    telegram.ext._updater.Updater.__init__ = __init__
-    
 # ==================== CONFIGURATION ====================
 # Use environment variable for bot token (SECURE)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -1478,8 +1463,8 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode='HTML'
         )
 
-def main():
-    """Start the bot."""
+async def run_application():
+    """Async function to run the application with proper event loop handling"""
     application = Application.builder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
@@ -1519,7 +1504,32 @@ def main():
     print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
     print("✅ Bot is running!")
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # Keep the bot running
+    while True:
+        await asyncio.sleep(1)
+
+def main():
+    """Start the bot with proper event loop handling for all Python versions."""
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop, create one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    try:
+        # Run the async function
+        asyncio.get_event_loop().run_until_complete(run_application())
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
