@@ -1164,6 +1164,96 @@ def format_account_result(result: Dict) -> str:
 
     return message
 
+# ==================== NEW COMMAND HANDLER ====================
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /check username:password command"""
+    try:
+        # Get the command arguments
+        if not context.args:
+            await update.message.reply_text(
+                "❌ <b>Usage</b>\n\n"
+                "Please use the command like this:\n"
+                "<code>/check username:password</code>\n\n"
+                "Example:\n"
+                "<code>/check myaccount:mypassword123</code>\n\n"
+                "Or use the button below for interactive check.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎯 Single Check", callback_data="single_check")],
+                    [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
+                ])
+            )
+            return
+        
+        # Join args in case there are spaces (though unlikely with username:password format)
+        full_arg = ' '.join(context.args)
+        
+        # Parse username:password
+        if ':' not in full_arg:
+            await update.message.reply_text(
+                "❌ <b>Invalid format</b>\n\n"
+                "Please use the format:\n"
+                "<code>/check username:password</code>\n\n"
+                "Make sure to include the colon (:) between username and password.",
+                parse_mode='HTML'
+            )
+            return
+        
+        account, password = full_arg.split(':', 1)
+        account = account.strip()
+        password = password.strip()
+        
+        if not account or not password:
+            await update.message.reply_text(
+                "❌ <b>Invalid credentials</b>\n\n"
+                "Both username and password must be provided.\n"
+                "Format: <code>/check username:password</code>",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Send processing message
+        processing_msg = await update.message.reply_text(
+            f"⏳ <b>Checking account...</b>\n\n"
+            f"📝 <code>{account}</code>\n\n"
+            "Please wait, this may take a few seconds...",
+            parse_mode='HTML'
+        )
+        
+        # Perform the check
+        try:
+            # Use the existing checker
+            result = checker.check_account(account, password, cookie_manager)
+            result_message = format_account_result(result)
+            
+            await processing_msg.edit_text(
+                result_message,
+                parse_mode='HTML'
+            )
+            
+            # Show main menu after results
+            await update.message.reply_text(
+                "🏠 <b>Main Menu</b>",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode='HTML'
+            )
+            
+        except Exception as e:
+            await processing_msg.edit_text(
+                f"❌ <b>Error during check</b>\n\n"
+                f"An error occurred: {str(e)}\n\n"
+                f"Please try again later.",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ <b>Error</b>\n\n"
+            f"An error occurred: {str(e)}",
+            parse_mode='HTML'
+        )
+
+# ==================== EXISTING BOT HANDLERS ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     welcome_message = f"""🎮 <b>Welcome to {BOT_NAME}!</b>
 
@@ -1173,6 +1263,7 @@ I can help you check Call of Duty: Mobile (CODM) account statistics and validity
 • Single account check
 • Detailed account information
 • CODM game data retrieval
+• Quick check with /check command
 
 <b>👤 Owner:</b> {OWNER_USERNAME}
 
@@ -1184,9 +1275,27 @@ Use the buttons below to get started!"""
         parse_mode='HTML'
     )
 
+async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle main menu callback"""
+    query = update.callback_query
+    await query.answer()
+    await query.message.edit_text(
+        "🏠 <b>Main Menu</b>",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode='HTML'
+    )
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if query.data == "main_menu":
+        await query.message.edit_text(
+            "🏠 <b>Main Menu</b>",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode='HTML'
+        )
+        return
 
     if query.data == "single_check":
         await query.message.reply_text(
@@ -1254,6 +1363,7 @@ This bot allows you to check Call of Duty: Mobile account validity and retrieve 
 • Uses Garena SSO API
 • Supports automatic DataDome handling
 • Real-time account validation
+• Quick check with /check command
 
 <b>👤 Developer:</b> {OWNER_USERNAME}
 <b>📅 Version:</b> 6.9.TAYO
@@ -1489,6 +1599,12 @@ async def run_application():
     """Async function to run the application with proper event loop handling"""
     application = Application.builder().token(BOT_TOKEN).build()
 
+    # Add command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("check", check_command))  # NEW COMMAND
+    application.add_handler(CommandHandler("cancel", cancel))
+
+    # Conversation handler
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(button_handler, pattern="single_check"),
@@ -1508,6 +1624,7 @@ async def run_application():
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
+            CommandHandler("check", check_command),  # Also fallback to check command
             CallbackQueryHandler(button_handler),
         ],
         per_message=False,
@@ -1515,15 +1632,16 @@ async def run_application():
         per_user=True,
     )
 
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(button_handler, pattern="stats"))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="about"))
+    application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="main_menu"))
     application.add_error_handler(error_handler)
 
     print(f"🤖 Starting {BOT_NAME}...")
     print(f"👤 Owner: {OWNER_USERNAME}")
     print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
+    print(f"✅ /check command added!")
     print("✅ Bot is running!")
 
     # Start the bot
