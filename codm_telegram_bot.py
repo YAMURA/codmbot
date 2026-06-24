@@ -1,5 +1,3 @@
-please add command /check username:password
-
 import hashlib
 import json
 import logging
