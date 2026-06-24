@@ -44,21 +44,6 @@ if not BOT_TOKEN:
 OWNER_USERNAME = "@ZyronDevv"
 BOT_NAME = "CODM Checker Bot"
 
-# ==================== PROXY CONFIGURATION ====================
-# Residential proxy configuration - set these as environment variables
-PROXY_ENABLED = os.environ.get("PROXY_ENABLED", "false").lower() == "true"
-PROXY_HOST = os.environ.get("PROXY_HOST", "")
-PROXY_PORT = os.environ.get("PROXY_PORT", "")
-PROXY_USERNAME = os.environ.get("PROXY_USERNAME", "")
-PROXY_PASSWORD = os.environ.get("PROXY_PASSWORD", "")
-PROXY_ROTATE_INTERVAL = int(os.environ.get("PROXY_ROTATE_INTERVAL", "10"))  # Rotate every N requests
-
-# Proxy rotation
-_current_proxy_index = 0
-_proxy_list = []
-_proxy_usage_count = 0
-_proxy_lock = threading.Lock()
-
 # ==================== TEMPORARY FEATURE FLAGS ====================
 BULK_CHECK_ENABLED = False
 BULK_CHECK_MESSAGE = "🔧 The bulk check feature is temporarily unavailable. Please use single check instead.\n\nWe're working on improving this feature. Thank you for your patience!"
@@ -69,90 +54,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# ==================== PROXY FUNCTIONS ====================
-def load_proxies_from_env():
-    """Load proxies from environment variables"""
-    global _proxy_list
-    proxies = []
-    
-    # Check for single proxy configuration
-    if PROXY_HOST and PROXY_PORT:
-        if PROXY_USERNAME and PROXY_PASSWORD:
-            proxy_url = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
-        else:
-            proxy_url = f"http://{PROXY_HOST}:{PROXY_PORT}"
-        proxies.append(proxy_url)
-    
-    # Check for multiple proxies (comma-separated)
-    proxy_list_env = os.environ.get("PROXY_LIST", "")
-    if proxy_list_env:
-        for proxy in proxy_list_env.split(","):
-            proxy = proxy.strip()
-            if proxy:
-                proxies.append(proxy)
-    
-    # Check for rotating proxy service (e.g., BrightData, Oxylabs)
-    rotating_proxy = os.environ.get("ROTATING_PROXY", "")
-    if rotating_proxy:
-        proxies.append(rotating_proxy)
-    
-    _proxy_list = proxies
-    logger.info(f"Loaded {len(_proxy_list)} proxies")
-    return _proxy_list
-
-def get_proxy() -> Optional[Dict[str, str]]:
-    """Get a proxy configuration for requests"""
-    global _proxy_list, _current_proxy_index, _proxy_usage_count
-    
-    if not PROXY_ENABLED or not _proxy_list:
-        return None
-    
-    with _proxy_lock:
-        # Rotate proxy based on interval
-        _proxy_usage_count += 1
-        if _proxy_usage_count >= PROXY_ROTATE_INTERVAL:
-            _proxy_usage_count = 0
-            _current_proxy_index = (_current_proxy_index + 1) % len(_proxy_list)
-        
-        proxy_url = _proxy_list[_current_proxy_index]
-        
-        # Parse proxy URL
-        if proxy_url.startswith("http://") or proxy_url.startswith("https://"):
-            return {"http": proxy_url, "https": proxy_url}
-        else:
-            return {"http": f"http://{proxy_url}", "https": f"http://{proxy_url}"}
-
-def get_proxy_dict() -> Optional[Dict[str, str]]:
-    """Get proxy dict for requests/session"""
-    return get_proxy()
-
-def get_proxy_for_cloudscraper():
-    """Get proxy configuration for cloudscraper"""
-    proxy = get_proxy()
-    if proxy:
-        return {
-            "http": proxy.get("http", ""),
-            "https": proxy.get("https", "")
-        }
-    return None
-
-def add_proxy_to_session(session, proxy_dict=None):
-    """Add proxy to a cloudscraper session"""
-    if not PROXY_ENABLED:
-        return session
-    
-    if proxy_dict is None:
-        proxy_dict = get_proxy_for_cloudscraper()
-    
-    if proxy_dict:
-        session.proxies.update(proxy_dict)
-        logger.debug(f"Using proxy: {proxy_dict}")
-    
-    return session
-
-# Load proxies on startup
-load_proxies_from_env()
 
 # ==================== HEALTH CHECK SERVER ====================
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -307,14 +208,8 @@ def get_datadome_cookie(session=None):
         try:
             if _use_own_scraper:
                 scraper = cloudscraper.create_scraper()
-                # Add proxy if enabled
-                if PROXY_ENABLED:
-                    proxy_dict = get_proxy_for_cloudscraper()
-                    if proxy_dict:
-                        scraper.proxies.update(proxy_dict)
             else:
                 scraper = session
-            
             response = scraper.post(url, headers=headers, data=data)
             response.raise_for_status()
 
@@ -558,16 +453,10 @@ class CODMChecker:
         self.session = None
         self.datadome_manager = None
         self.cookie_manager = None
-        self.proxy_rotation_enabled = PROXY_ENABLED
 
     def _init_session(self, cookie_manager=None):
         """Initialize a new session with cookies and datadome"""
         self.session = cloudscraper.create_scraper()
-        
-        # Add proxy if enabled
-        if self.proxy_rotation_enabled:
-            add_proxy_to_session(self.session)
-        
         self.datadome_manager = DataDomeManager()
         self.cookie_manager = cookie_manager
 
@@ -595,11 +484,6 @@ class CODMChecker:
 
         return self.session
 
-    def _rotate_proxy_if_needed(self):
-        """Rotate proxy for the current session if rotation is enabled"""
-        if self.proxy_rotation_enabled and self.session:
-            add_proxy_to_session(self.session)
-
     def _prelogin(self, account):
         """Prelogin – returns (v1, v2) or (None, None)"""
         url = 'https://sso.garena.com/api/prelogin'
@@ -611,10 +495,6 @@ class CODMChecker:
         while retry_total < MAX_TOTAL:
             retry_total += 1
             try:
-                # Rotate proxy if enabled
-                if self.proxy_rotation_enabled and retry_total % PROXY_ROTATE_INTERVAL == 0:
-                    self._rotate_proxy_if_needed()
-                
                 params = {
                     'app_id': '10100',
                     'account': account,
@@ -742,10 +622,6 @@ class CODMChecker:
 
         for retry in range(3):
             try:
-                # Rotate proxy if enabled and on retry
-                if self.proxy_rotation_enabled and retry > 0:
-                    self._rotate_proxy_if_needed()
-                
                 params = {
                     'app_id': '10100',
                     'account': account,
@@ -860,10 +736,6 @@ class CODMChecker:
         """Get CODM grant code"""
         for attempt in range(OAUTH_MAX_RETRIES):
             try:
-                # Rotate proxy if enabled on retry
-                if self.proxy_rotation_enabled and attempt > 0:
-                    self._rotate_proxy_if_needed()
-                
                 random_id = str(int(time.time() * 1000))
                 grant_url = "https://100082.connect.garena.com/oauth/token/grant"
 
@@ -948,16 +820,7 @@ class CODMChecker:
 
         for attempt in range(OAUTH_MAX_RETRIES):
             try:
-                # Create a new session with proxy for this request
-                if PROXY_ENABLED:
-                    session = requests.Session()
-                    proxy_dict = get_proxy_for_cloudscraper()
-                    if proxy_dict:
-                        session.proxies.update(proxy_dict)
-                else:
-                    session = requests.Session()
-                
-                resp = session.post(exchange_url, headers=exchange_headers, data=exchange_body, timeout=12)
+                resp = requests.post(exchange_url, headers=exchange_headers, data=exchange_body, timeout=12)
                 resp.raise_for_status()
                 data = resp.json()
                 access_token = data.get("access_token", "")
@@ -992,10 +855,6 @@ class CODMChecker:
                 "user-agent": "Mozilla/5.0 (Linux; Android 11; RMX2195) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36"
             }
 
-            # Rotate proxy for this request if enabled
-            if self.proxy_rotation_enabled:
-                self._rotate_proxy_if_needed()
-            
             self.session.get(codm_callback_url, headers=callback_headers, allow_redirects=False, timeout=12)
 
             api_callback_url = f"https://api-delete-request-aos.codm.garena.co.id/oauth/callback/?access_token={access_token}"
@@ -1017,10 +876,6 @@ class CODMChecker:
                 "user-agent": "Mozilla/5.0 (Linux; Android 11; RMX2195) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36"
             }
 
-            # Rotate proxy for this request if enabled
-            if self.proxy_rotation_enabled:
-                self._rotate_proxy_if_needed()
-            
             api_response = self.session.get(api_callback_url, headers=api_callback_headers, allow_redirects=False, timeout=12)
             location = api_response.headers.get("Location", "")
 
@@ -1134,7 +989,7 @@ class CODMChecker:
         }
 
         try:
-            # Initialize session with cookies and proxy
+            # Initialize session with cookies
             self._init_session(cookie_manager)
 
             # Step 1: Prelogin
@@ -1409,7 +1264,6 @@ I can help you check Call of Duty: Mobile (CODM) account statistics and validity
 • Detailed account information
 • CODM game data retrieval
 • Quick check with /check command
-• Residential proxy support {'✅' if PROXY_ENABLED else '❌'}
 
 <b>👤 Owner:</b> {OWNER_USERNAME}
 
@@ -1510,7 +1364,6 @@ This bot allows you to check Call of Duty: Mobile account validity and retrieve 
 • Supports automatic DataDome handling
 • Real-time account validation
 • Quick check with /check command
-• Residential proxy support: {'✅ Enabled' if PROXY_ENABLED else '❌ Disabled'}
 
 <b>👤 Developer:</b> {OWNER_USERNAME}
 <b>📅 Version:</b> 6.9.TAYO
@@ -1789,8 +1642,6 @@ async def run_application():
     print(f"👤 Owner: {OWNER_USERNAME}")
     print(f"📦 Bulk Check: {'✅ ENABLED' if BULK_CHECK_ENABLED else '❌ DISABLED'}")
     print(f"✅ /check command added!")
-    print(f"🔒 Proxy Support: {'✅ ENABLED' if PROXY_ENABLED else '❌ DISABLED'}")
-    print(f"🔄 Proxy Rotation Interval: {PROXY_ROTATE_INTERVAL} requests")
     print("✅ Bot is running!")
 
     # Start the bot
