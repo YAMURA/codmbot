@@ -1550,6 +1550,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 report += f"\n\n... and {len(valid_accounts) - 10} more"
 
         report += f"\n\n👤 Owner: {OWNER_USERNAME}"
+        report += f"\n👤 Bot: @VoxCaediteSupportBot"
 
         os.remove(file_path)
 
